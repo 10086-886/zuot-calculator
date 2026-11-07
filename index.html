@@ -1,99 +1,175 @@
-# 做T涨幅计算器 · 工程交接说明
-
-## 这是什么
-
-一个单文件 H5 计算器，用来算 A 股「一轮买入 + 卖出」的打平涨幅（即股价至少要涨多少才不亏），已处理"单笔佣金不足 5 元按 5 元收取"的真实约束。
-
-面向散户做 T 的成本测算场景，移动端优先设计（微信内可直接打开）。
-
-## 文件清单
-
-| 文件 | 说明 |
-| --- | --- |
-| `做T涨幅计算器.html` | 唯一产物。单文件自包含，HTML + 内联 CSS + 内联 JS，零外部依赖，双击即可在浏览器打开 |
-| `README.md` | 本说明文件 |
-
-无 `assets/`、无 CDN 引用、无构建步骤、无网络请求。
-
-## 已发布地址
-
-- 线上链接：https://bytedance.doubao.link/app/app_17hk9f0r017
-- app_id：`app_17hk9f0r017`
-- 如需重新发布到同一应用，在该 HTML 所在目录执行：
-  `lark-cli apps +deploy --file-path ./做T涨幅计算器.html --app-id app_17hk9f0r017`
-
-## 核心公式
-
-```
-n% = max(2x, 10/(y·P)) + (s + 2g)
-```
-
-| 符号 | 含义 | 单位 |
-| --- | --- | --- |
-| x | 佣金费率 | %（填 0.023 表示万分之2.3） |
-| y | 手数（1手 = 100股） | 手 |
-| P | 股价 | 元 |
-| s | 印花税率 | % |
-| g | 过户费率 | % |
-| n | 打平所需最低涨幅 | % |
-
-### 推导
-
-- 单边成交金额 `A = 100·y·P`
-- 单笔佣金 `max(A·x/100, 5)`，买卖两笔
-- 印花税仅卖出：`A·s/100`
-- 过户费双向：`2·A·g/100`
-- 令毛利 `A·n/100` 等于总成本，两边除以 `A` 得 `n = 2·max(x, 500/A) + (s + 2g)`，即 `max(2x, 10/(y·P)) + (s + 2g)`
-
-### 关键派生量
-
-- **脱离 5 元收费区的手数门槛**：`y_min = 5/(x·P)`（手）
-- **每股需涨金额**：`ΔP = P·n/100`
-- **卖出目标价**：`P·(1 + n/100)`
-
-## 页面功能
-
-输入：股价、手数、佣金率、印花税、过户费（后三个带默认值 0.023 / 0.05 / 0.001）。
-
-输出：
-- 打平涨幅 n%、每股需涨金额、对应卖出价
-- 成交金额、佣金、印花税、过户费、合计成本明细
-- 是否落在 5 元最低收费区的判定，以及脱离所需手数
-- 1 / 5 / 10 / 20 / 30 / 33 / 50 / 100 手的对照表
-- 快捷手数按钮（点击直接填入）
-
-## 已验证算例
-
-参数：P = 6.66 元，x = 0.023%，s = 0.05%，g = 0.001%。门槛 `y_min = 5/(0.023×6.66) ≈ 32.6` 手，即 33 手切换。
-
-| 手数 | 打平涨幅 |
-| --- | --- |
-| 1 | 1.554% |
-| 5 | 0.352% |
-| 10 | 0.202% |
-| 20 | 0.127% |
-| 30 | 0.102% |
-| 32 | 0.099% |
-| 33 | 0.098% |
-| 50 | 0.098% |
-| 100 | 0.098% |
-
-33 手时单边成交额 21,978 元、总成本约 21.54 元、每股需涨约 0.0065 元（跳 1 分即够）。
-
-## 需要注意的口径
-
-1. **x 的单位是百分数**，填 0.023 而不是 0.00023。
-2. 算出来的是**打平线**，不是"值得做"的线。实盘建议在其基础上留 0.2 个百分点以上的缓冲。
-3. 结果为理论税费成本，**不含滑点、盘口买卖价差、冲击成本**。
-4. 公式忽略二阶项（卖出金额比买入高 n% 带来的微量费用差），误差量级约 0.00005%，可忽略。
-5. 印花税率、过户费率做成可改参数，是因为政策可能调整，不要把 0.05 / 0.001 写死。
-
-## 技术约束（若要修改）
-
-- 单文件自包含：CSS 写在 `<style>`、JS 写在 `<script>` 内联块，不拆出 `.css` / `.js` / 额外 HTML
-- 原生 JS，不用 React / Vue / 任何构建工具
-- `<meta name="viewport">` 必须含 `width=device-width, initial-scale=1`，禁用 `maximum-scale` / `user-scalable=no`
-- 移动端字体：正文 ≥ 14px，`<input>` ≥ 16px（避免 iOS 聚焦时自动放大）
-- 触控热区 ≥ 44×44px
-- 窄屏优先：第一行 CSS 按 375px 写，桌面样式放 `@media (min-width: 768px)` 追加
-- 禁止僵尸按钮：每个可点元素都要有真实 handler
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>做T涨幅计算器</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%;}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",Arial,sans-serif;font-size:15px;line-height:1.55;color:#1b2233;background:#eef1f7;-webkit-font-smoothing:antialiased;padding-bottom:calc(24px + env(safe-area-inset-bottom,0px));}
+h1,h2,h3,p{margin:0;}
+button{font-family:inherit;border:none;background:none;outline:none;}
+input{font-family:inherit;}
+.hd{background:linear-gradient(135deg,#1f5eff 0%,#0aa8a0 100%);color:#fff;padding:calc(18px + env(safe-area-inset-top,0px)) 16px 18px;}
+.hd h1{font-size:19px;font-weight:700;letter-spacing:.2px;}
+.hd p{margin-top:6px;font-size:13px;line-height:1.45;opacity:.86;}
+.main{padding:12px;}
+.card{background:#fff;border-radius:14px;padding:12px 14px;margin-bottom:12px;box-shadow:0 1px 3px rgba(27,34,51,.06),0 6px 18px rgba(27,34,51,.04);}
+.card-tt{display:flex;align-items:center;font-size:14px;font-weight:600;color:#1b2233;padding:2px 0 10px;}
+.card-tt .bar{width:3px;height:14px;border-radius:2px;background:#1f5eff;margin-right:8px;flex:0 0 auto;}
+.field{display:flex;align-items:center;padding:7px 0;}
+.field+.field{border-top:1px solid #f3f5f9;}
+.field>label{flex:0 0 74px;font-size:13px;color:#616b80;}
+.ipt{flex:1;display:flex;align-items:center;min-width:0;}
+.ipt input{flex:1;min-width:0;width:100%;height:44px;margin-right:6px;border:1px solid #e0e5ef;border-radius:10px;background:#f7f9fc;padding:0 10px;font-size:16px;font-weight:600;color:#1b2233;line-height:normal;outline:none;-webkit-appearance:none;appearance:none;transition:border-color .15s,background .15s,box-shadow .15s;}
+.ipt input:focus{border-color:#1f5eff;background:#fff;box-shadow:0 0 0 3px rgba(31,94,255,.10);}
+.ipt .unit{flex:0 0 auto;width:24px;text-align:right;font-size:13px;color:#96a0b3;}
+.chips{display:flex;flex-wrap:wrap;padding:4px 0 0;}
+.chip{height:44px;min-width:50px;padding:0 10px;margin:0 8px 8px 0;border:1px solid #e0e5ef;border-radius:10px;background:#f7f9fc;font-size:13px;font-weight:600;color:#3b465c;-webkit-appearance:none;appearance:none;transition:background .12s,border-color .12s,color .12s;}
+.chip:active{background:#e8eefc;border-color:#1f5eff;color:#1f5eff;}
+.hero{background:linear-gradient(135deg,#1f5eff 0%,#0aa8a0 100%);border-radius:14px;padding:16px;color:#fff;margin-bottom:12px;box-shadow:0 8px 20px rgba(31,94,255,.22);}
+.hero-lb{font-size:13px;opacity:.85;}
+.hero-val{display:flex;align-items:baseline;margin:2px 0 6px;}
+.hero-val span{font-size:42px;font-weight:800;line-height:1.05;letter-spacing:-1px;font-variant-numeric:tabular-nums;}
+.hero-val em{font-size:20px;font-style:normal;font-weight:700;margin-left:4px;opacity:.9;}
+.hero-sub{font-size:13px;line-height:1.5;opacity:.94;}
+.hero-sub b{font-weight:700;}
+.row{display:flex;align-items:baseline;justify-content:space-between;padding:9px 0;font-size:14px;}
+.row+.row{border-top:1px solid #f3f5f9;}
+.row .k{color:#616b80;flex:0 0 auto;padding-right:10px;}
+.row .v{font-weight:600;color:#1b2233;text-align:right;font-variant-numeric:tabular-nums;word-break:break-all;}
+.row.total{border-top:1px solid #e6eaf3;margin-top:2px;}
+.row.total .k{color:#1b2233;font-weight:600;font-size:15px;}
+.row.total .v{color:#e5484d;font-size:17px;font-weight:800;}
+.tip{margin:10px 0 2px;padding:10px 12px;border-radius:10px;font-size:13px;line-height:1.55;}
+.tip.warn{background:#fff7e8;color:#8a5a00;border:1px solid #ffe2ab;}
+.tip.ok{background:#e9faf2;color:#0a7a52;border:1px solid #b8ecd4;}
+.tip b{font-weight:700;}
+.tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+.tbl{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums;}
+.tbl th{font-size:12px;font-weight:600;color:#96a0b3;text-align:right;padding:6px 4px;border-bottom:1px solid #eef1f6;white-space:nowrap;}
+.tbl th:first-child{text-align:left;}
+.tbl td{text-align:right;padding:12px 4px;border-bottom:1px solid #f5f7fb;color:#3b465c;white-space:nowrap;}
+.tbl td:first-child{text-align:left;font-weight:700;color:#1b2233;}
+.tbl tbody tr:last-child td{border-bottom:none;}
+.tbl tbody tr.cur td{background:#edf3ff;color:#1f5eff;font-weight:700;}
+.tbl tbody tr.cur td:first-child{color:#1f5eff;}
+.tbl-note{font-size:12px;color:#96a0b3;padding:10px 4px 2px;text-align:center;}
+.note{font-size:12px;line-height:1.65;color:#8a94a8;padding:2px 6px;}
+@media (min-width:768px){body{background:#e9edf5;}.hd{padding:24px 16px 22px;}.hd h1{font-size:22px;}.hd p{font-size:14px;}.main{max-width:560px;margin:0 auto;padding:16px;}.card{padding:16px 18px;margin-bottom:14px;}.hero{padding:20px;margin-bottom:14px;}.hero-val span{font-size:46px;}.field>label{flex:0 0 84px;font-size:14px;}}
+</style>
+</head>
+<body>
+<header class="hd">
+  <h1>做T涨幅计算器</h1>
+  <p>算出「买入 + 卖出」一轮的真实打平涨幅，已计入佣金 5 元最低收费</p>
+</header>
+<main class="main">
+  <section class="card">
+    <div class="card-tt"><span class="bar"></span>输入参数</div>
+    <div class="field"><label for="price">股价</label><div class="ipt"><input id="price" type="text" inputmode="decimal" value="6.66" autocomplete="off" autocorrect="off" spellcheck="false"><span class="unit">元</span></div></div>
+    <div class="field"><label for="lots">手数</label><div class="ipt"><input id="lots" type="text" inputmode="numeric" value="10" autocomplete="off" autocorrect="off" spellcheck="false"><span class="unit">手</span></div></div>
+    <div class="field"><label for="comm">佣金率</label><div class="ipt"><input id="comm" type="text" inputmode="decimal" value="0.023" autocomplete="off" autocorrect="off" spellcheck="false"><span class="unit">%</span></div></div>
+    <div class="field"><label for="stamp">印花税</label><div class="ipt"><input id="stamp" type="text" inputmode="decimal" value="0.05" autocomplete="off" autocorrect="off" spellcheck="false"><span class="unit">%</span></div></div>
+    <div class="field"><label for="transfer">过户费</label><div class="ipt"><input id="transfer" type="text" inputmode="decimal" value="0.001" autocomplete="off" autocorrect="off" spellcheck="false"><span class="unit">%</span></div></div>
+    <div class="chips" id="chips">
+      <button type="button" class="chip" data-lots="1">1手</button>
+      <button type="button" class="chip" data-lots="5">5手</button>
+      <button type="button" class="chip" data-lots="10">10手</button>
+      <button type="button" class="chip" data-lots="20">20手</button>
+      <button type="button" class="chip" data-lots="30">30手</button>
+      <button type="button" class="chip" data-lots="33">33手</button>
+      <button type="button" class="chip" data-lots="50">50手</button>
+      <button type="button" class="chip" data-lots="100">100手</button>
+    </div>
+  </section>
+  <section class="hero">
+    <div class="hero-lb">打平所需涨幅</div>
+    <div class="hero-val"><span id="rPct">—</span><em>%</em></div>
+    <div class="hero-sub">每股需涨 <b id="rDelta">—</b> 元 · 卖出目标价 <b id="rTarget">—</b> 元</div>
+  </section>
+  <section class="card">
+    <div class="card-tt"><span class="bar"></span>成本明细</div>
+    <div class="row"><span class="k">单边成交金额</span><span class="v" id="rAmount">—</span></div>
+    <div class="row"><span class="k">佣金（买卖双边，含 5 元下限）</span><span class="v" id="rComm">—</span></div>
+    <div class="row"><span class="k">印花税（仅卖出）</span><span class="v" id="rStamp">—</span></div>
+    <div class="row"><span class="k">过户费（双边）</span><span class="v" id="rTransfer">—</span></div>
+    <div class="row total"><span class="k">一轮合计成本</span><span class="v" id="rTotal">—</span></div>
+    <div class="tip warn" id="tip">—</div>
+  </section>
+  <section class="card">
+    <div class="card-tt"><span class="bar"></span>各手数对照（股价 <span id="tblPrice">6.66</span> 元）</div>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>手数</th><th>打平涨幅</th><th>总成本(元)</th><th>卖出价(元)</th></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <p class="tbl-note">点击任意行可直接填入该手数</p>
+  </section>
+  <p class="note">结果为理论打平线，不含滑点、盘口价差与冲击成本；实盘建议在此基础上留 0.2 个百分点以上缓冲。<br>公式：n% = max(2x, 10/(y·P)) + (s + 2g)，x 为佣金率(%)、y 为手数、P 为股价、s 为印花税率(%)、g 为过户费率(%)。</p>
+</main>
+<script>
+(function(){
+  'use strict';
+  var MIN_COMM = 5, LOT = 100, LOT_LIST = [1, 5, 10, 20, 30, 33, 50, 100];
+  var el = {}, IDS = ['price','lots','comm','stamp','transfer','rPct','rDelta','rTarget','rAmount','rComm','rStamp','rTransfer','rTotal','tip','tbody','chips','tblPrice'];
+  for (var i = 0; i < IDS.length; i++) { el[IDS[i]] = document.getElementById(IDS[i]); }
+  function toNum(v){ var n = parseFloat(v); return isFinite(n) ? n : 0; }
+  function fmt(n, d){ if (n === null || n === undefined || !isFinite(n)) return '—'; var s = Math.abs(n).toFixed(d); var p = s.split('.'); p[0] = p[0].replace(/\B(?=(\d{3})+(?!\d))/g, ','); return (n < 0 ? '-' : '') + p.join('.'); }
+  function closestAttr(node, attr, stop){ while (node && node !== stop) { if (node.nodeType === 1 && node.getAttribute(attr) !== null) return node; node = node.parentNode; } return null; }
+  function compute(p, y, x, s, g){
+    var A = LOT * y * p;
+    if (!(A > 0)) return null;
+    var rawComm = A * x / 100;
+    var commEach = Math.max(rawComm, MIN_COMM);
+    var commTotal = commEach * 2;
+    var stamp = A * s / 100;
+    var transfer = A * g / 100 * 2;
+    var total = commTotal + stamp + transfer;
+    return { A: A, commEach: commEach, commTotal: commTotal, stamp: stamp, transfer: transfer, total: total, n: total / A * 100, atFloor: rawComm < MIN_COMM };
+  }
+  function renderTable(p, x, s, g, curY){
+    var html = '';
+    for (var i = 0; i < LOT_LIST.length; i++) {
+      var ly = LOT_LIST[i], c = compute(p, ly, x, s, g), cur = (Math.abs(ly - curY) < 1e-9) ? ' class="cur"' : '';
+      html += '<tr data-lots="' + ly + '"' + cur + '><td>' + ly + ' 手</td><td>' + (c ? fmt(c.n, 3) + '%' : '—') + '</td><td>' + (c ? fmt(c.total, 2) : '—') + '</td><td>' + (c ? fmt(p * (1 + c.n / 100), 3) : '—') + '</td></tr>';
+    }
+    el.tbody.innerHTML = html;
+  }
+  function update(){
+    var p = toNum(el.price.value), y = toNum(el.lots.value), x = toNum(el.comm.value), s = toNum(el.stamp.value), g = toNum(el.transfer.value);
+    var r = compute(p, y, x, s, g);
+    if (!r) {
+      el.rPct.textContent = '—'; el.rDelta.textContent = '—'; el.rTarget.textContent = '—'; el.rAmount.textContent = '—'; el.rComm.textContent = '—'; el.rStamp.textContent = '—'; el.rTransfer.textContent = '—'; el.rTotal.textContent = '—'; el.tblPrice.textContent = '—';
+      el.tip.className = 'tip warn'; el.tip.textContent = '请输入大于 0 的股价与手数';
+      renderTable(p, x, s, g, y); return;
+    }
+    el.rPct.textContent = fmt(r.n, 3); el.rDelta.textContent = fmt(p * r.n / 100, 4); el.rTarget.textContent = fmt(p * (1 + r.n / 100), 3);
+    el.rAmount.textContent = fmt(r.A, 2) + ' 元'; el.rComm.textContent = fmt(r.commTotal, 2) + ' 元'; el.rStamp.textContent = fmt(r.stamp, 2) + ' 元'; el.rTransfer.textContent = fmt(r.transfer, 2) + ' 元'; el.rTotal.textContent = fmt(r.total, 2) + ' 元'; el.tblPrice.textContent = fmt(p, 2);
+    var ymin = (p > 0 && x > 0) ? MIN_COMM / (p * x) : Infinity;
+    if (r.atFloor) {
+      var hint = isFinite(ymin) ? '股价 ' + fmt(p, 2) + ' 元时，买入 <b>' + Math.ceil(ymin) + ' 手</b>及以上可脱离 5 元最低收费区。' : '佣金费率为 0，佣金将始终按 5 元最低标准收取。';
+      el.tip.className = 'tip warn'; el.tip.innerHTML = '当前单笔佣金 <b>' + fmt(r.commEach, 2) + ' 元</b>，低于 5 元下限，实际按 5 元计收，费率优势未发挥。' + hint;
+    } else {
+      el.tip.className = 'tip ok'; el.tip.innerHTML = '当前单笔佣金 <b>' + fmt(r.commEach, 2) + ' 元</b>，已高于 5 元下限，按实际费率计收，费率优势已发挥。';
+    }
+    renderTable(p, x, s, g, y);
+  }
+  function bindNum(input, allowDot){
+    input.addEventListener('input', function(){
+      var v = input.value, c = v.replace(/[^\d.]/g, '');
+      if (allowDot) { var idx = c.indexOf('.'); if (idx >= 0) { c = c.slice(0, idx + 1) + c.slice(idx + 1).replace(/\./g, ''); } } else { c = c.replace(/\./g, ''); }
+      if (c !== v) input.value = c;
+      update();
+    }, false);
+  }
+  bindNum(el.price, true); bindNum(el.lots, false); bindNum(el.comm, true); bindNum(el.stamp, true); bindNum(el.transfer, true);
+  el.chips.addEventListener('click', function(e){ var b = closestAttr(e.target, 'data-lots', el.chips); if (b) { el.lots.value = b.getAttribute('data-lots'); update(); } }, false);
+  el.tbody.addEventListener('click', function(e){ var tr = closestAttr(e.target, 'data-lots', el.tbody); if (tr) { el.lots.value = tr.getAttribute('data-lots'); update(); } }, false);
+  update();
+})();
+</script>
+</body>
+</html>
